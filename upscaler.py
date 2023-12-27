@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+from shutil import rmtree
 import subprocess
 import sys
 
@@ -98,15 +99,20 @@ class SDUpscaler:
         self.timestamp = int(time.time())
         if args.seed is not None:
             seed_everything(args.seed)
+            self.seed = args.seed
         else:
             seed_everything(self.timestamp)
+            self.seed = self.timestamp
+
+        self.prompt = args.prompt
+        rmtree("./tmp")
 
         subprocess.run(
             [
                 "python",
                 "./stable-diffusion/scripts/txt2img.py",
                 "--prompt",
-                f"{args.prompt}",
+                f"{self.prompt}",
                 "--plms",
                 "--ckpt",
                 f"{sd_model_path}",
@@ -115,6 +121,8 @@ class SDUpscaler:
                 f"{self.num_samples}",
                 "--outdir",
                 "./tmp",
+                "--seed",
+                f"{self.seed}",
             ]
         )
         self.input_image = Image.open("./tmp/samples/00001.png").convert("RGB")
@@ -128,7 +136,6 @@ class SDUpscaler:
         filename = filename.replace("%S", f"{self.seed}")
         filename = filename.replace("%I", f"{index:02}")
         filename = filename.replace("%P", clean_prompt(self.prompt))
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
         img.save(filename)
 
     @torch.no_grad()
@@ -251,6 +258,6 @@ class SDUpscaler:
 
 parser = argparse.ArgumentParser()
 parser.add_argument("prompt", type=str, default=None)
-parser.add_argument("--seed", type=int, default=None)
+parser.add_argument("--seed", type=int, default=42)
 upscaler = SDUpscaler(parser.parse_args())
 upscaler.run()
