@@ -103,7 +103,8 @@ class SDUpscaler:
                 "--skip_grid",
                 "--n_samples",
                 f"{self.num_samples}",
-                "--outdir ./tmp",
+                "--outdir",
+                "./tmp",
             ]
         )
         self.input_image = Image.open("./tmp/samples/00001.png").convert("RGB")
