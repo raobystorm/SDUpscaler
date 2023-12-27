@@ -1,0 +1,11 @@
+pillow>=9.3.0
+ftfy
+einops
+braceexpand
+requests
+transformers==4.31.0
+clip
+omegaconf
+pytorch-lightning
+kornia
+k-diffusion==0.0.15
