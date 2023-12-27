@@ -86,14 +86,3 @@ def download_from_huggingface(repo, filename):
                 continue
             else:
                 raise e
-
-
-def fetch_models():
-    # sd_model_path = download_from_huggingface("CompVis/stable-diffusion-v-1-4-original", "sd-v1-4.ckpt")
-    vae_840k_model_path = download_from_huggingface(
-        "stabilityai/sd-vae-ft-mse-original", "vae-ft-mse-840000-ema-pruned.ckpt"
-    )
-    vae_560k_model_path = download_from_huggingface(
-        "stabilityai/sd-vae-ft-ema-original", "vae-ft-ema-560000-ema-pruned.ckpt"
-    )
-    return vae_840k_model_path, vae_560k_model_path

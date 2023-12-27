@@ -9,3 +9,6 @@ omegaconf
 pytorch-lightning
 kornia
 k-diffusion==0.0.15
+opencv-python
+diffusers
+invisible-watermark

@@ -1,4 +1,5 @@
 import argparse
+import subprocess
 import sys
 
 sys.path.extend(["./taming-transformers", "./stable-diffusion", "./latent-diffusion"])
@@ -65,6 +66,9 @@ class SDUpscaler:
         vae_560k_model_path = download_from_huggingface(
             "stabilityai/sd-vae-ft-ema-original", "vae-ft-ema-560000-ema-pruned.ckpt"
         )
+        sd_model_path = download_from_huggingface(
+            "CompVis/stable-diffusion-v-1-4-original", "sd-v1-4.ckpt"
+        )
 
         device = torch.device("cuda")
 
@@ -88,6 +92,20 @@ class SDUpscaler:
             seed_everything(self.timestamp)
 
         self.input_image = Image.open(args.input_image).convert("RGB")
+        subprocess.run(
+            [
+                "python",
+                "./stable-diffusion/scripts/txt2img.py",
+                "--prompt",
+                f"{args.prompt}",
+                "--plms",
+                "--ckpt",
+                f"{sd_model_path}",
+                "--skip_grid",
+                "--n_samples",
+                f"{self.num_samples}",
+            ]
+        )
 
     def run(self):
         tok_up = CLIPTokenizerTransform()
@@ -97,10 +115,8 @@ class SDUpscaler:
         def condition_up(prompts):
             return text_encoder_up(tok_up(prompts))
 
-        prompt = ""
-
         uc = condition_up(self.batch_size * [""])
-        c = condition_up(self.batch_size * [prompt])
+        c = condition_up(self.batch_size * [self.prompt])
 
         if self.decoder == "finetuned_840k":
             vae = self.vae_model_840k
@@ -209,7 +225,7 @@ class SDUpscaler:
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("input_image", type=str)
+parser.add_argument("prompt", type=str, default=None)
 parser.add_argument("--seed", type=int, default=None)
 upscaler = SDUpscaler(parser.parse_args())
 upscaler.run()
