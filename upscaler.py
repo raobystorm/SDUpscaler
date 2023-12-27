@@ -1,4 +1,6 @@
 import argparse
+import os
+import re
 import subprocess
 import sys
 
@@ -29,6 +31,14 @@ def load_model_from_config(config, ckpt):
     m, u = model.load_state_dict(sd, strict=False)
     model = model.to(cpu).eval().requires_grad_(False)
     return model
+
+
+def clean_prompt(prompt):
+    badchars = re.compile(r"[/\\]")
+    prompt = badchars.sub("_", prompt)
+    if len(prompt) > 100:
+        prompt = prompt[:100] + "…"
+    return prompt
 
 
 class SDUpscaler:
@@ -111,6 +121,15 @@ class SDUpscaler:
 
         self.tok_up = CLIPTokenizerTransform()
         self.text_encoder_up = CLIPEmbedder(device=self.device)
+
+    def save_image(self, img, index):
+        filename = "%T-%I-%P.png"
+        filename = filename.replace("%T", f"{self.timestamp}")
+        filename = filename.replace("%S", f"{self.seed}")
+        filename = filename.replace("%I", f"{index:02}")
+        filename = filename.replace("%P", clean_prompt(self.prompt))
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        img.save(filename)
 
     @torch.no_grad()
     def condition_up(self, prompts):
@@ -223,7 +242,10 @@ class SDUpscaler:
             # Display and save samples.
             for j in range(pixels.shape[0]):
                 img = TF.to_pil_image(pixels[j])
-                img.save("output.png")
+                self.save_image(
+                    img,
+                    image_id,
+                )
                 image_id += 1
 
 
