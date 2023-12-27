@@ -91,7 +91,6 @@ class SDUpscaler:
         else:
             seed_everything(self.timestamp)
 
-        self.input_image = Image.open(args.input_image).convert("RGB")
         subprocess.run(
             [
                 "python",
@@ -104,19 +103,82 @@ class SDUpscaler:
                 "--skip_grid",
                 "--n_samples",
                 f"{self.num_samples}",
+                "--outdir ./tmp",
             ]
         )
+        self.input_image = Image.open("./tmp/samples/00001.png").convert("RGB")
+
+        self.tok_up = CLIPTokenizerTransform()
+        self.text_encoder_up = CLIPEmbedder(device=self.device)
+
+    @torch.no_grad()
+    def condition_up(self, prompts):
+        return self.text_encoder_up(self.tok_up(prompts))
+
+    def do_sample(self, noise, extra_args):
+        # Noise levels from stable diffusion.
+        sigma_min, sigma_max = 0.029167532920837402, 14.614642143249512
+        uc = self.condition_up(self.batch_size * [""])
+
+        model_wrap = CFGUpscaler(self.model_up, uc, cond_scale=self.guidance_scale)
+
+        # We take log-linear steps in noise-level from sigma_max to sigma_min, using one of the k diffusion samplers.
+        sigmas = (
+            torch.linspace(np.log(sigma_max), np.log(sigma_min), self.steps + 1)
+            .exp()
+            .to(self.device)
+        )
+        if self.sampler == "k_euler":
+            return K.sampling.sample_euler(
+                model_wrap, noise * sigma_max, sigmas, extra_args=extra_args
+            )
+        elif self.sampler == "k_euler_ancestral":
+            return K.sampling.sample_euler_ancestral(
+                model_wrap,
+                noise * sigma_max,
+                sigmas,
+                extra_args=extra_args,
+                eta=self.eta,
+            )
+        elif self.sampler == "k_dpm_2_ancestral":
+            return K.sampling.sample_dpm_2_ancestral(
+                model_wrap,
+                noise * sigma_max,
+                sigmas,
+                extra_args=extra_args,
+                eta=self.eta,
+            )
+        elif self.sampler == "k_dpm_fast":
+            return K.sampling.sample_dpm_fast(
+                model_wrap,
+                noise * sigma_max,
+                sigma_min,
+                sigma_max,
+                self.steps,
+                extra_args=extra_args,
+                eta=self.eta,
+            )
+        elif self.sampler == "k_dpm_adaptive":
+            sampler_opts = dict(
+                s_noise=1.0,
+                rtol=self.tol_scale * 0.05,
+                atol=self.tol_scale / 127.5,
+                pcoeff=0.2,
+                icoeff=0.4,
+                dcoeff=0,
+            )
+            return K.sampling.sample_dpm_adaptive(
+                model_wrap,
+                noise * sigma_max,
+                sigma_min,
+                sigma_max,
+                extra_args=extra_args,
+                eta=self.eta,
+                **sampler_opts,
+            )
 
     def run(self):
-        tok_up = CLIPTokenizerTransform()
-        text_encoder_up = CLIPEmbedder(device=self.device)
-
-        @torch.no_grad()
-        def condition_up(prompts):
-            return text_encoder_up(tok_up(prompts))
-
-        uc = condition_up(self.batch_size * [""])
-        c = condition_up(self.batch_size * [self.prompt])
+        c = self.condition_up(self.batch_size * [""])
 
         if self.decoder == "finetuned_840k":
             vae = self.vae_model_840k
@@ -130,70 +192,10 @@ class SDUpscaler:
 
         [_, C, H, W] = low_res_latent.shape
 
-        # Noise levels from stable diffusion.
-        sigma_min, sigma_max = 0.029167532920837402, 14.614642143249512
-
-        model_wrap = CFGUpscaler(self.model_up, uc, cond_scale=self.guidance_scale)
         low_res_sigma = torch.full(
             [self.batch_size], self.noise_aug_level, device=self.device
         )
         x_shape = [self.batch_size, C, 2 * H, 2 * W]
-
-        def do_sample(noise, extra_args):
-            # We take log-linear steps in noise-level from sigma_max to sigma_min, using one of the k diffusion samplers.
-            sigmas = (
-                torch.linspace(np.log(sigma_max), np.log(sigma_min), self.steps + 1)
-                .exp()
-                .to(self.device)
-            )
-            if self.sampler == "k_euler":
-                return K.sampling.sample_euler(
-                    model_wrap, noise * sigma_max, sigmas, extra_args=extra_args
-                )
-            elif self.sampler == "k_euler_ancestral":
-                return K.sampling.sample_euler_ancestral(
-                    model_wrap,
-                    noise * sigma_max,
-                    sigmas,
-                    extra_args=extra_args,
-                    eta=self.eta,
-                )
-            elif self.sampler == "k_dpm_2_ancestral":
-                return K.sampling.sample_dpm_2_ancestral(
-                    model_wrap,
-                    noise * sigma_max,
-                    sigmas,
-                    extra_args=extra_args,
-                    eta=self.eta,
-                )
-            elif self.sampler == "k_dpm_fast":
-                return K.sampling.sample_dpm_fast(
-                    model_wrap,
-                    noise * sigma_max,
-                    sigma_min,
-                    sigma_max,
-                    self.steps,
-                    extra_args=extra_args,
-                    eta=self.eta,
-                )
-            elif self.sampler == "k_dpm_adaptive":
-                sampler_opts = dict(
-                    s_noise=1.0,
-                    rtol=self.tol_scale * 0.05,
-                    atol=self.tol_scale / 127.5,
-                    pcoeff=0.2,
-                    icoeff=0.4,
-                    dcoeff=0,
-                )
-                return K.sampling.sample_dpm_adaptive(
-                    model_wrap,
-                    noise * sigma_max,
-                    sigma_min,
-                    sigma_max,
-                    extra_args=extra_args,
-                    eta=self.eta,
-                    **sampler_opts,
-                )
 
         image_id = 0
         for _ in range((self.num_samples - 1) // self.batch_size + 1):
@@ -210,7 +212,7 @@ class SDUpscaler:
                 "c": c,
             }
             noise = torch.randn(x_shape, device=self.device)
-            up_latents = do_sample(noise, extra_args)
+            up_latents = self.do_sample(noise, extra_args)
 
             pixels = vae.decode(
                 up_latents / self.SD_Q
